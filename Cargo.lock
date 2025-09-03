@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "cartesian"
 version = "0.1.0"
+dependencies = [
+ "cartesian-derive",
+]
 
 [[package]]
 name = "cartesian-derive"
