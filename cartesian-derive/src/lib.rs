@@ -51,21 +51,43 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
             // Inductive case
             data.fields
                 .iter()
-                .map(|field| field.ident.as_ref())
+                .map(|field| {
+                    let skip = field.attrs.iter().any(|attr| {
+                        if !matches!(attr.style, syn::AttrStyle::Outer) {
+                            return false;
+                        }
+
+                        attr.meta.require_list().is_ok_and(|list| {
+                            list.path.is_ident("cartesian") && list.tokens.to_string() == "skip"
+                        })
+                    });
+
+                    (skip, field.ident.as_ref())
+                })
                 .enumerate()
-                .map(|(index, field)| match field {
+                .map(|(index, (skip, field))| match field {
                     None => (
+                        skip,
                         format_ident!("_{}", index),
                         Literal::usize_unsuffixed(index).into_token_stream(),
                     ),
-                    Some(ident) => (ident.clone(), ident.clone().into_token_stream()),
+                    Some(ident) => (skip, ident.clone(), ident.clone().into_token_stream()),
                 })
                 .rev()
-                .fold(inner, |inner, (outer_ident, outer_access)| {
-                    quote! {
-                        self.#outer_access.iter().flat_map(move |#outer_ident| {
-                            #inner
-                        })
+                .fold(inner, |inner, (skip, outer_ident, outer_access)| {
+                    if skip {
+                        quote! {
+                            {
+                                let #outer_ident = &self.#outer_access;
+                                #inner
+                            }
+                        }
+                    } else {
+                        quote! {
+                            self.#outer_access.iter().flat_map(move |#outer_ident| {
+                                #inner
+                            })
+                        }
                     }
                 })
         }
