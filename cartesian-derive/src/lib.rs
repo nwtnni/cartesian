@@ -6,7 +6,7 @@ use quote::quote;
 use syn::parse_macro_input;
 use syn::parse_quote;
 
-#[proc_macro_derive(Cartesian)]
+#[proc_macro_derive(Cartesian, attributes(cartesian))]
 pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(item as syn::DeriveInput);
 
