@@ -61,7 +61,8 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
             let inner = quote!(::core::iter::once(#inner));
 
             // Inductive case
-            data.fields
+            let iter = data
+                .fields
                 .iter_mut()
                 .enumerate()
                 .map(|(index, field)| {
@@ -100,7 +101,14 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                             })
                         }
                     }
-                })
+                });
+
+            data.fields
+                .iter_mut()
+                .map(|field| &mut field.attrs)
+                .for_each(remove_attr);
+
+            iter
         }
 
         syn::Data::Enum(_) => todo!(),
@@ -117,6 +125,16 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     }
     .into_token_stream()
     .into()
+}
+
+fn remove_attr(attrs: &mut Vec<syn::Attribute>) {
+    attrs.retain(|attr| {
+        if !matches!(attr.style, syn::AttrStyle::Outer) {
+            return true;
+        }
+
+        !attr.path().is_ident("cartesian")
+    })
 }
 
 fn match_field(field: &syn::Field, name: &str) -> bool {
