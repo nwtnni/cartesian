@@ -13,12 +13,24 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     match &mut item.data {
         syn::Data::Union(_) => unimplemented!(),
         syn::Data::Struct(data) => {
-            data.fields
-                .iter_mut()
-                .map(|field| &mut field.ty)
-                .for_each(|ty| {
-                    *ty = parse_quote!(Vec::<#ty>);
-                })
+            data.fields.iter_mut().for_each(|field| {
+                let compose = match_field(field, "compose");
+                let skip = match_field(field, "skip");
+
+                if compose {
+                    match &mut field.ty {
+                        syn::Type::Path(path) => {
+                            let segment = path.path.segments.last_mut().unwrap();
+                            segment.ident = format_ident!("{}Cartesian", segment.ident);
+                        }
+                        // FIXME: use associated type on trait
+                        _ => unimplemented!(),
+                    }
+                } else if !skip {
+                    let ty = &field.ty;
+                    field.ty = parse_quote!(Vec::<#ty>);
+                }
+            })
         }
         syn::Data::Enum(_) => todo!(),
     }
@@ -27,7 +39,7 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     let ident_original = std::mem::replace(&mut item.ident, ident_cartesian);
     let ident_cartesian = &item.ident;
 
-    let iter = match &item.data {
+    let iter = match &mut item.data {
         syn::Data::Union(_) => unimplemented!(),
         syn::Data::Struct(data) => {
             let tuple = data.fields.iter().any(|field| field.ident.is_none());
@@ -50,41 +62,40 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
 
             // Inductive case
             data.fields
-                .iter()
-                .map(|field| {
-                    let skip = field.attrs.iter().any(|attr| {
-                        if !matches!(attr.style, syn::AttrStyle::Outer) {
-                            return false;
-                        }
-
-                        attr.meta.require_list().is_ok_and(|list| {
-                            list.path.is_ident("cartesian") && list.tokens.to_string() == "skip"
-                        })
-                    });
-
-                    (skip, field.ident.as_ref())
-                })
+                .iter_mut()
                 .enumerate()
-                .map(|(index, (skip, field))| match field {
-                    None => (
-                        skip,
-                        format_ident!("_{}", index),
-                        Literal::usize_unsuffixed(index).into_token_stream(),
-                    ),
-                    Some(ident) => (skip, ident.clone(), ident.clone().into_token_stream()),
+                .map(|(index, field)| {
+                    let compose = match_field(field, "compose");
+                    let skip = match_field(field, "skip");
+
+                    let (ident, access) = match field.ident.as_ref() {
+                        None => (
+                            format_ident!("_{}", index),
+                            Literal::usize_unsuffixed(index).into_token_stream(),
+                        ),
+                        Some(ident) => (ident.clone(), ident.clone().into_token_stream()),
+                    };
+
+                    (compose, skip, ident, access)
                 })
                 .rev()
-                .fold(inner, |inner, (skip, outer_ident, outer_access)| {
-                    if skip {
+                .fold(inner, |inner, (compose, skip, ident, access)| {
+                    if compose {
+                        quote! {
+                            self.#access.cartesian().flat_map(move |#ident| {
+                                #inner
+                            })
+                        }
+                    } else if skip {
                         quote! {
                             {
-                                let #outer_ident = &self.#outer_access;
+                                let #ident = &self.#access;
                                 #inner
                             }
                         }
                     } else {
                         quote! {
-                            self.#outer_access.iter().flat_map(move |#outer_ident| {
+                            self.#access.iter().flat_map(move |#ident| {
                                 #inner
                             })
                         }
@@ -106,4 +117,18 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     }
     .into_token_stream()
     .into()
+}
+
+fn match_field(field: &syn::Field, name: &str) -> bool {
+    field.attrs.iter().any(|attr| match_attr(attr, name))
+}
+
+fn match_attr(attr: &syn::Attribute, name: &str) -> bool {
+    if !matches!(attr.style, syn::AttrStyle::Outer) {
+        return false;
+    }
+
+    attr.meta
+        .require_list()
+        .is_ok_and(|list| list.path.is_ident("cartesian") && list.tokens.to_string() == name)
 }
