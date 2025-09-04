@@ -84,6 +84,7 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                     if compose {
                         quote! {
                             self.#access.cartesian().flat_map(move |#ident| {
+                                let #ident = &#ident;
                                 #inner
                             })
                         }
