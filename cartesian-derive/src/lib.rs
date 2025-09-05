@@ -30,22 +30,11 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 .collect::<Vec<_>>();
 
             data.fields.iter_mut().zip(&info).for_each(|(field, info)| {
-                match &info.r#type {
-                    None => {
-                        let ty = &field.ty;
-                        field.ty = parse_quote!(Vec::<#ty>);
-                    }
-                    Some(FieldType::Flatten) => {
-                        match &mut field.ty {
-                            syn::Type::Path(path) => {
-                                let segment = path.path.segments.last_mut().unwrap();
-                                segment.ident = format_ident!("{}Cartesian", segment.ident);
-                            }
-                            // FIXME: use associated type on trait
-                            _ => unimplemented!(),
-                        }
-                    }
-                    Some(FieldType::Single) => (),
+                let r#type = &field.ty;
+                field.ty = match &info.r#type {
+                    None => parse_quote!(Vec<#r#type>),
+                    Some(FieldType::Flatten) => parse_quote!(::cartesian::IntoIter<#r#type>),
+                    Some(FieldType::Single) => return,
                 }
             });
 
