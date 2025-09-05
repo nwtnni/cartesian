@@ -71,18 +71,18 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                      r#type,
                  }| match r#type {
                     None => quote! {
-                        self.#unescaped.iter().flat_map(move |#escaped| {
+                        self.#unescaped.clone().into_iter().flat_map(move |#escaped| {
                             #inner
                         })
                     },
                     Some(FieldType::Flatten) => quote! {
-                        self.#unescaped.cartesian().flat_map(move |#escaped| {
+                        self.#unescaped.clone().into_iter_cartesian().flat_map(move |#escaped| {
                             #inner
                         })
                     },
                     Some(FieldType::Single) => quote! {
                         {
-                            let #escaped = &self.#unescaped;
+                            let #escaped = &self.#unescaped.clone();
                             #inner
                         }
                     },
@@ -99,10 +99,16 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     };
 
     quote! {
+        impl ::cartesian::Cartesian for #ident_original {
+            type IntoIter = #ident_cartesian;
+            type Item = #ident_original;
+        }
+
         #item
 
-        impl #ident_cartesian {
-            pub fn cartesian(&self) -> impl Iterator<Item = #ident_original> {
+        impl ::cartesian::IntoIterCartesian for #ident_cartesian {
+            type Item = #ident_original;
+            fn into_iter_cartesian(self) -> impl Iterator<Item = Self::Item> {
                 #iter
             }
         }

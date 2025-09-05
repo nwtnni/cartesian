@@ -1,4 +1,5 @@
 use cartesian::Cartesian;
+use cartesian::IntoIterCartesian as _;
 
 #[derive(Cartesian, Debug, PartialEq, Eq)]
 struct Named {
@@ -9,11 +10,11 @@ struct Named {
 #[test]
 fn named() {
     assert_eq!(
-        NamedCartesian {
+        cartesian::IntoIter::<Named> {
             a: vec![3, 4],
             b: vec![1, 2]
         }
-        .cartesian()
+        .into_iter_cartesian()
         .collect::<Vec<_>>(),
         vec![
             Named { a: 3, b: 1 },
@@ -30,9 +31,14 @@ struct Tuple(u32, u64);
 #[test]
 fn tuple_struct() {
     assert_eq!(
-        TupleCartesian(vec![3, 4], vec![1, 2],)
-            .cartesian()
-            .collect::<Vec<_>>(),
+        // Type alias does not define constructor function for tuple :(
+        // https://users.rust-lang.org/t/error-expected-function-tuple-struct-or-tuple-variant-found-type-alias-rgbspectrum/77571
+        cartesian::IntoIter::<Tuple> {
+            0: vec![3, 4],
+            1: vec![1, 2]
+        }
+        .into_iter_cartesian()
+        .collect::<Vec<_>>(),
         vec![Tuple(3, 1), Tuple(3, 2), Tuple(4, 1), Tuple(4, 2)],
     )
 }
