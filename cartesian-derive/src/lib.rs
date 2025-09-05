@@ -69,10 +69,13 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 },
             );
             let clone = clones
-                .split_last()
-                .map(|(_, head)| head)
-                .into_iter()
-                .flatten();
+                .iter()
+                .zip(&info)
+                .rev()
+                // Skip past enclosing singles
+                .skip_while(|(_, info)| matches!(info.r#type, Some(FieldType::Single)))
+                .skip(1)
+                .map(|(clone, _)| clone);
             let base = quote! {
                 #(#clone)*
                 ::core::iter::once(
@@ -80,17 +83,27 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 )
             };
 
+            let inside = info
+                .iter()
+                .position(|info| matches!(info.r#type, None | Some(FieldType::Flatten)))
+                .unwrap_or(info.len());
+
             // Inductive case
-            let clones = (0..clones.len()).map(|index| {
-                if index == 0 {
+            let clones = info.iter().enumerate().map(|(index, info)| {
+                if index <= inside {
                     return quote!();
                 }
 
-                let before = clones[0..index.saturating_sub(1)].iter();
-                let after = clones[index..].iter();
-                quote! {
-                    #(#before)*
-                    #(#after)*
+                match info.r#type {
+                    Some(FieldType::Single) => clones[index].clone(),
+                    None | Some(FieldType::Flatten) => {
+                        let before = clones[0..index.saturating_sub(1)].iter();
+                        let after = clones[index..].iter();
+                        quote! {
+                            #(#before)*
+                            #(#after)*
+                        }
+                    }
                 }
             });
             let inductive = info.iter().zip(clones).rev().fold(
