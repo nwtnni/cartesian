@@ -35,7 +35,7 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                         let ty = &field.ty;
                         field.ty = parse_quote!(Vec::<#ty>);
                     }
-                    Some(FieldType::Compose) => {
+                    Some(FieldType::Flatten) => {
                         match &mut field.ty {
                             syn::Type::Path(path) => {
                                 let segment = path.path.segments.last_mut().unwrap();
@@ -45,7 +45,7 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                             _ => unimplemented!(),
                         }
                     }
-                    Some(FieldType::Skip) => (),
+                    Some(FieldType::Single) => (),
                 }
             });
 
@@ -75,12 +75,12 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                             #inner
                         })
                     },
-                    Some(FieldType::Compose) => quote! {
+                    Some(FieldType::Flatten) => quote! {
                         self.#unescaped.cartesian().flat_map(move |#escaped| {
                             #inner
                         })
                     },
-                    Some(FieldType::Skip) => quote! {
+                    Some(FieldType::Single) => quote! {
                         {
                             let #escaped = &self.#unescaped;
                             #inner
@@ -149,21 +149,21 @@ impl FieldInfo {
 }
 
 enum FieldType {
-    Compose,
-    Skip,
+    Flatten,
+    Single,
 }
 
 impl FieldType {
     fn new(field: &syn::Field) -> Option<Self> {
-        let compose = match_field(field, "compose");
-        let skip = match_field(field, "skip");
+        let flatten = match_field(field, "flatten");
+        let single = match_field(field, "single");
 
-        if compose as usize + skip as usize > 1 {
-            abort!(field, "Attributes [compose, skip] are mutually exclusive")
-        } else if compose {
-            Some(Self::Compose)
-        } else if skip {
-            Some(Self::Skip)
+        if flatten as usize + single as usize > 1 {
+            abort!(field, "Attributes [flatten, single] are mutually exclusive")
+        } else if flatten {
+            Some(Self::Flatten)
+        } else if single {
+            Some(Self::Single)
         } else {
             None
         }
