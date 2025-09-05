@@ -1,38 +1,18 @@
 use proc_macro::TokenStream;
+use proc_macro_error::abort;
+use proc_macro_error::proc_macro_error;
 use quote::ToTokens as _;
 use quote::format_ident;
 use quote::quote;
 use syn::parse_macro_input;
 use syn::parse_quote;
 
+static NAMESPACE: &str = "cartesian";
+
+#[proc_macro_error]
 #[proc_macro_derive(Cartesian, attributes(cartesian))]
 pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(item as syn::DeriveInput);
-
-    match &mut item.data {
-        syn::Data::Union(_) => unimplemented!(),
-        syn::Data::Struct(data) => {
-            data.fields.iter_mut().for_each(|field| {
-                let compose = match_field(field, "compose");
-                let skip = match_field(field, "skip");
-
-                if compose {
-                    match &mut field.ty {
-                        syn::Type::Path(path) => {
-                            let segment = path.path.segments.last_mut().unwrap();
-                            segment.ident = format_ident!("{}Cartesian", segment.ident);
-                        }
-                        // FIXME: use associated type on trait
-                        _ => unimplemented!(),
-                    }
-                } else if !skip {
-                    let ty = &field.ty;
-                    field.ty = parse_quote!(Vec::<#ty>);
-                }
-            })
-        }
-        syn::Data::Enum(_) => todo!(),
-    }
 
     let ident_cartesian = quote::format_ident!("{}Cartesian", item.ident);
     let ident_original = std::mem::replace(&mut item.ident, ident_cartesian);
@@ -40,53 +20,74 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
 
     let iter = match &mut item.data {
         syn::Data::Union(_) => unimplemented!(),
+        syn::Data::Enum(_) => unimplemented!(),
         syn::Data::Struct(data) => {
-            // Base case
-            let fields = data.fields.iter().enumerate().map(|(index, field)| {
-                let (unescaped, escaped) = field_access(index, field);
-                quote!(#unescaped: #escaped.clone())
+            let info = data
+                .fields
+                .iter()
+                .enumerate()
+                .map(|(index, field)| FieldInfo::new(index, field))
+                .collect::<Vec<_>>();
+
+            data.fields.iter_mut().zip(&info).for_each(|(field, info)| {
+                match &info.r#type {
+                    None => {
+                        let ty = &field.ty;
+                        field.ty = parse_quote!(Vec::<#ty>);
+                    }
+                    Some(FieldType::Compose) => {
+                        match &mut field.ty {
+                            syn::Type::Path(path) => {
+                                let segment = path.path.segments.last_mut().unwrap();
+                                segment.ident = format_ident!("{}Cartesian", segment.ident);
+                            }
+                            // FIXME: use associated type on trait
+                            _ => unimplemented!(),
+                        }
+                    }
+                    Some(FieldType::Skip) => (),
+                }
             });
 
-            let inner = quote! {
+            // Base case
+            let fields = info.iter().map(
+                |FieldInfo {
+                     unescaped, escaped, ..
+                 }| quote!(#unescaped: #escaped.clone()),
+            );
+            let base = quote! {
                 ::core::iter::once(
                     #ident_original { #(#fields),* }
                 )
             };
 
             // Inductive case
-            let iter = data
-                .fields
-                .iter_mut()
-                .enumerate()
-                .map(|(index, field)| {
-                    let compose = match_field(field, "compose");
-                    let skip = match_field(field, "skip");
-                    let (unescaped, escaped) = field_access(index, field);
-                    (compose, skip, unescaped, escaped)
-                })
-                .rev()
-                .fold(inner, |inner, (compose, skip, unescaped, escaped)| {
-                    if compose {
-                        quote! {
-                            self.#unescaped.cartesian().flat_map(move |#escaped| {
-                                #inner
-                            })
+            let iter = info.iter().rev().fold(
+                base,
+                |inner,
+                 FieldInfo {
+                     unescaped,
+                     escaped,
+                     r#type,
+                 }| match r#type {
+                    None => quote! {
+                        self.#unescaped.iter().flat_map(move |#escaped| {
+                            #inner
+                        })
+                    },
+                    Some(FieldType::Compose) => quote! {
+                        self.#unescaped.cartesian().flat_map(move |#escaped| {
+                            #inner
+                        })
+                    },
+                    Some(FieldType::Skip) => quote! {
+                        {
+                            let #escaped = &self.#unescaped;
+                            #inner
                         }
-                    } else if skip {
-                        quote! {
-                            {
-                                let #escaped = &self.#unescaped;
-                                #inner
-                            }
-                        }
-                    } else {
-                        quote! {
-                            self.#unescaped.iter().flat_map(move |#escaped| {
-                                #inner
-                            })
-                        }
-                    }
-                });
+                    },
+                },
+            );
 
             data.fields
                 .iter_mut()
@@ -95,8 +96,6 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
 
             iter
         }
-
-        syn::Data::Enum(_) => todo!(),
     };
 
     quote! {
@@ -112,27 +111,63 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     .into()
 }
 
-fn field_access(index: usize, field: &syn::Field) -> (syn::Member, syn::Ident) {
-    match field.ident.as_ref() {
-        None => (
-            syn::Member::Unnamed(syn::Index {
-                index: index as u32,
-                span: proc_macro2::Span::call_site(),
-            }),
-            format_ident!("_{}", index),
-        ),
-        Some(ident) => (syn::Member::Named(ident.clone()), ident.clone()),
-    }
-}
-
 fn remove_attr(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| {
         if !matches!(attr.style, syn::AttrStyle::Outer) {
             return true;
         }
 
-        !attr.path().is_ident("cartesian")
+        !attr.path().is_ident(NAMESPACE)
     })
+}
+
+struct FieldInfo {
+    unescaped: syn::Member,
+    escaped: syn::Ident,
+    r#type: Option<FieldType>,
+}
+
+impl FieldInfo {
+    fn new(index: usize, field: &syn::Field) -> Self {
+        let (unescaped, escaped) = match field.ident.as_ref() {
+            None => (
+                syn::Member::Unnamed(syn::Index {
+                    index: index as u32,
+                    span: proc_macro2::Span::call_site(),
+                }),
+                format_ident!("_{}", index),
+            ),
+            Some(ident) => (syn::Member::Named(ident.clone()), ident.clone()),
+        };
+
+        Self {
+            unescaped,
+            escaped,
+            r#type: FieldType::new(field),
+        }
+    }
+}
+
+enum FieldType {
+    Compose,
+    Skip,
+}
+
+impl FieldType {
+    fn new(field: &syn::Field) -> Option<Self> {
+        let compose = match_field(field, "compose");
+        let skip = match_field(field, "skip");
+
+        if compose as usize + skip as usize > 1 {
+            abort!(field, "Attributes [compose, skip] are mutually exclusive")
+        } else if compose {
+            Some(Self::Compose)
+        } else if skip {
+            Some(Self::Skip)
+        } else {
+            None
+        }
+    }
 }
 
 fn match_field(field: &syn::Field, name: &str) -> bool {
@@ -146,5 +181,5 @@ fn match_attr(attr: &syn::Attribute, name: &str) -> bool {
 
     attr.meta
         .require_list()
-        .is_ok_and(|list| list.path.is_ident("cartesian") && list.tokens.to_string() == name)
+        .is_ok_and(|list| list.path.is_ident(NAMESPACE) && list.tokens.to_string() == name)
 }
