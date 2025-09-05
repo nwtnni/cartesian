@@ -38,6 +38,18 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 }
             });
 
+            // Consistently use escaped identifiers as variable
+            let moves = info.iter().map(
+                |FieldInfo {
+                     unescaped, escaped, ..
+                 }| {
+                    quote! {
+                        let #escaped = self.#unescaped;
+                    }
+                },
+            );
+            let moves = quote!(#(#moves)*);
+
             // Base case
             let fields = info.iter().map(
                 |FieldInfo {
@@ -50,31 +62,59 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 )
             };
 
-            // Inductive case
-            let iter = info.iter().rev().fold(
+            let clones = info
+                .iter()
+                .map(|FieldInfo { escaped, .. }| {
+                    quote! {
+                        let #escaped = #escaped.clone();
+                    }
+                })
+                .collect::<Vec<_>>();
+            let clones = (0..clones.len()).map(|index| {
+                if index == 0 {
+                    return quote!();
+                }
+
+                let before = clones[0..index.saturating_sub(1)].iter();
+                let after = clones[index + 1..].iter();
+                quote! {
+                    #(#before)*
+                    #(#after)*
+                }
+            });
+
+            let inductive = info.iter().zip(clones).rev().fold(
                 base,
                 |inner,
-                 FieldInfo {
-                     unescaped,
-                     escaped,
-                     r#type,
-                 }| match r#type {
-                    None => quote! {
-                        self.#unescaped.clone().into_iter().flat_map(move |#escaped| {
-                            #inner
-                        })
+                 (
+                    FieldInfo {
+                        escaped, r#type, ..
                     },
-                    Some(FieldType::Flatten) => quote! {
-                        self.#unescaped.clone().into_iter_cartesian().flat_map(move |#escaped| {
+                    clones,
+                )| {
+                    let inner = match r#type {
+                        None => quote! {
+                            #escaped.clone().into_iter().flat_map(move |#escaped| {
+                                #inner
+                            })
+                        },
+                        Some(FieldType::Flatten) => quote! {
+                            #escaped.clone().into_iter_cartesian().flat_map(move |#escaped| {
+                                #inner
+                            })
+                        },
+                        Some(FieldType::Single) => quote! {
+                            let #escaped = &self.#escaped;
                             #inner
-                        })
-                    },
-                    Some(FieldType::Single) => quote! {
+                        },
+                    };
+
+                    quote! {
                         {
-                            let #escaped = &self.#unescaped;
+                            #clones
                             #inner
                         }
-                    },
+                    }
                 },
             );
 
@@ -83,7 +123,10 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 .map(|field| &mut field.attrs)
                 .for_each(remove_attr);
 
-            iter
+            quote! {
+                #moves
+                #inductive
+            }
         }
     };
 
@@ -96,13 +139,6 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
         #item
 
         impl ::cartesian::IntoIterCartesian for #ident_cartesian {
-            type Item = #ident_original;
-            fn into_iter_cartesian(self) -> impl Iterator<Item = Self::Item> {
-                #iter
-            }
-        }
-
-        impl ::cartesian::IntoIterCartesian for &'_ #ident_cartesian {
             type Item = #ident_original;
             fn into_iter_cartesian(self) -> impl Iterator<Item = Self::Item> {
                 #iter
