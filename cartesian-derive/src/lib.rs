@@ -50,18 +50,6 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
             );
             let moves = quote!(#(#moves)*);
 
-            // Base case
-            let fields = info.iter().map(
-                |FieldInfo {
-                     unescaped, escaped, ..
-                 }| quote!(#unescaped: #escaped.clone()),
-            );
-            let base = quote! {
-                ::core::iter::once(
-                    #ident_original { #(#fields),* }
-                )
-            };
-
             let clones = info
                 .iter()
                 .map(|FieldInfo { escaped, .. }| {
@@ -70,19 +58,41 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                     }
                 })
                 .collect::<Vec<_>>();
+
+            // Base case
+            let fields = info.iter().map(
+                |FieldInfo {
+                     unescaped, escaped, ..
+                 }| match unescaped {
+                    syn::Member::Unnamed(_) => quote!(#unescaped: #escaped),
+                    syn::Member::Named(_) => quote!(#escaped),
+                },
+            );
+            let clone = clones
+                .split_last()
+                .map(|(_, head)| head)
+                .into_iter()
+                .flatten();
+            let base = quote! {
+                #(#clone)*
+                ::core::iter::once(
+                    #ident_original { #(#fields),* }
+                )
+            };
+
+            // Inductive case
             let clones = (0..clones.len()).map(|index| {
                 if index == 0 {
                     return quote!();
                 }
 
                 let before = clones[0..index.saturating_sub(1)].iter();
-                let after = clones[index + 1..].iter();
+                let after = clones[index..].iter();
                 quote! {
                     #(#before)*
                     #(#after)*
                 }
             });
-
             let inductive = info.iter().zip(clones).rev().fold(
                 base,
                 |inner,
@@ -94,26 +104,21 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 )| {
                     let inner = match r#type {
                         None => quote! {
-                            #escaped.clone().into_iter().flat_map(move |#escaped| {
+                            #escaped.into_iter().flat_map(move |#escaped| {
                                 #inner
                             })
                         },
                         Some(FieldType::Flatten) => quote! {
-                            #escaped.clone().into_iter_cartesian().flat_map(move |#escaped| {
+                            #escaped.into_iter_cartesian().flat_map(move |#escaped| {
                                 #inner
                             })
                         },
-                        Some(FieldType::Single) => quote! {
-                            let #escaped = &self.#escaped;
-                            #inner
-                        },
+                        Some(FieldType::Single) => inner,
                     };
 
                     quote! {
-                        {
-                            #clones
-                            #inner
-                        }
+                        #clones
+                        #inner
                     }
                 },
             );
