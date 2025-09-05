@@ -1,5 +1,4 @@
 use proc_macro::TokenStream;
-use proc_macro2::Literal;
 use quote::ToTokens as _;
 use quote::format_ident;
 use quote::quote;
@@ -42,23 +41,17 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     let iter = match &mut item.data {
         syn::Data::Union(_) => unimplemented!(),
         syn::Data::Struct(data) => {
-            let tuple = data.fields.iter().any(|field| field.ident.is_none());
-
             // Base case
-            let inner = data
-                .fields
-                .iter()
-                .map(|field| field.ident.as_ref())
-                .enumerate()
-                .map(|(index, field)| match field {
-                    None => format_ident!("_{}", index),
-                    Some(ident) => ident.clone(),
-                });
-            let inner = match tuple {
-                true => quote!(#ident_original( #( #inner.clone() ),* )),
-                false => quote!(#ident_original { #( #inner: #inner.clone() ),* }),
+            let fields = data.fields.iter().enumerate().map(|(index, field)| {
+                let (unescaped, escaped) = field_access(index, field);
+                quote!(#unescaped: #escaped.clone())
+            });
+
+            let inner = quote! {
+                ::core::iter::once(
+                    #ident_original { #(#fields),* }
+                )
             };
-            let inner = quote!(::core::iter::once(#inner));
 
             // Inductive case
             let iter = data
@@ -68,36 +61,27 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 .map(|(index, field)| {
                     let compose = match_field(field, "compose");
                     let skip = match_field(field, "skip");
-
-                    let (ident, access) = match field.ident.as_ref() {
-                        None => (
-                            format_ident!("_{}", index),
-                            Literal::usize_unsuffixed(index).into_token_stream(),
-                        ),
-                        Some(ident) => (ident.clone(), ident.clone().into_token_stream()),
-                    };
-
-                    (compose, skip, ident, access)
+                    let (unescaped, escaped) = field_access(index, field);
+                    (compose, skip, unescaped, escaped)
                 })
                 .rev()
-                .fold(inner, |inner, (compose, skip, ident, access)| {
+                .fold(inner, |inner, (compose, skip, unescaped, escaped)| {
                     if compose {
                         quote! {
-                            self.#access.cartesian().flat_map(move |#ident| {
-                                let #ident = &#ident;
+                            self.#unescaped.cartesian().flat_map(move |#escaped| {
                                 #inner
                             })
                         }
                     } else if skip {
                         quote! {
                             {
-                                let #ident = &self.#access;
+                                let #escaped = &self.#unescaped;
                                 #inner
                             }
                         }
                     } else {
                         quote! {
-                            self.#access.iter().flat_map(move |#ident| {
+                            self.#unescaped.iter().flat_map(move |#escaped| {
                                 #inner
                             })
                         }
@@ -126,6 +110,19 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     }
     .into_token_stream()
     .into()
+}
+
+fn field_access(index: usize, field: &syn::Field) -> (syn::Member, syn::Ident) {
+    match field.ident.as_ref() {
+        None => (
+            syn::Member::Unnamed(syn::Index {
+                index: index as u32,
+                span: proc_macro2::Span::call_site(),
+            }),
+            format_ident!("_{}", index),
+        ),
+        Some(ident) => (syn::Member::Named(ident.clone()), ident.clone()),
+    }
 }
 
 fn remove_attr(attrs: &mut Vec<syn::Attribute>) {
