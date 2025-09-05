@@ -1,4 +1,4 @@
-use cartesian_derive::Cartesian;
+use cartesian::Cartesian;
 
 #[derive(Cartesian, Debug, PartialEq, Eq)]
 struct Named {
