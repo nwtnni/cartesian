@@ -71,7 +71,7 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                     },
                     Some(FieldType::Single) => quote! {
                         {
-                            let #escaped = &self.#unescaped.clone();
+                            let #escaped = &self.#unescaped;
                             #inner
                         }
                     },
