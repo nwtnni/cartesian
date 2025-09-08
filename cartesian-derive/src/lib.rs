@@ -139,7 +139,7 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
             data.fields
                 .iter_mut()
                 .map(|field| &mut field.attrs)
-                .for_each(remove_attr);
+                .for_each(remove_field_attr);
 
             quote! {
                 #moves
@@ -147,6 +147,8 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
             }
         }
     };
+
+    forward_item_attr(&mut item.attrs);
 
     quote! {
         impl ::cartesian::Cartesian for #ident_original {
@@ -167,14 +169,22 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     .into()
 }
 
-fn remove_attr(attrs: &mut Vec<syn::Attribute>) {
-    attrs.retain(|attr| {
-        if !matches!(attr.style, syn::AttrStyle::Outer) {
-            return true;
-        }
+fn forward_item_attr(attrs: &mut [syn::Attribute]) {
+    attrs
+        .iter_mut()
+        .filter(|attr| matches!(attr.style, syn::AttrStyle::Outer))
+        .filter(|attr| attr.path().is_ident(NAMESPACE))
+        .for_each(|attr| match &attr.meta {
+            syn::Meta::Path(_) | syn::Meta::NameValue(_) => (),
+            syn::Meta::List(list) => {
+                let inner = &list.tokens;
+                *attr = syn::parse_quote!(#[ #inner ]);
+            }
+        })
+}
 
-        !attr.path().is_ident(NAMESPACE)
-    })
+fn remove_field_attr(attrs: &mut Vec<syn::Attribute>) {
+    attrs.retain(|attr| !(match_attr(attr, "flatten") || match_attr(attr, "single")))
 }
 
 struct FieldInfo {
