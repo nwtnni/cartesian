@@ -161,7 +161,7 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
         impl ::cartesian::IntoIterCartesian for #ident_cartesian {
             type Item = #ident_original;
             fn into_iter_cartesian(self) -> impl Iterator<Item = Self::Item> {
-                #iter
+                Box::new({ #iter })
             }
         }
     }
