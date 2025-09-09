@@ -3,10 +3,10 @@ use cartesian::IntoIterCartesian as _;
 
 #[test]
 fn custom_default() {
-    #[derive(Cartesian)]
-    #[cartesian(derive(Default))]
+    #[derive(Cartesian, PartialEq, Eq, Debug, Clone)]
+    #[cartesian(default)]
+    #[cartesian(derive(PartialEq, Eq, Debug, Clone))]
     struct CustomDefault {
-        #[allow(unused)]
         a: u32,
     }
 
@@ -18,6 +18,9 @@ fn custom_default() {
 
     let iter = cartesian::IntoIter::<CustomDefault>::default();
 
-    // FIXME: default should probably produce the default base type once
-    assert_eq!(iter.into_iter_cartesian().count(), 0);
+    assert_eq!(iter.clone().into_iter_cartesian().count(), 1);
+    assert_eq!(
+        iter.into_iter_cartesian().next(),
+        Some(CustomDefault::default())
+    );
 }

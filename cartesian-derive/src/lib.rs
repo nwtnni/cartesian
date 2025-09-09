@@ -18,7 +18,7 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
     let ident_original = std::mem::replace(&mut item.ident, ident_cartesian);
     let ident_cartesian = &item.ident;
 
-    let iter = match &mut item.data {
+    let (iter, default) = match &mut item.data {
         syn::Data::Union(_) => unimplemented!(),
         syn::Data::Enum(_) => unimplemented!(),
         syn::Data::Struct(data) => {
@@ -141,13 +141,41 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 .map(|field| &mut field.attrs)
                 .for_each(remove_field_attr);
 
-            quote! {
-                #moves
-                #inductive
-            }
+            let default = item
+                .attrs
+                .iter()
+                .any(|attr| match_attr(attr, "default"))
+                .then(|| {
+                    let fields = info.iter().map(|FieldInfo { unescaped, .. }| {
+                        quote! {
+                            #unescaped: vec![default.#unescaped]
+                        }
+                    });
+
+                    quote! {
+                        impl Default for #ident_cartesian where #ident_original: Default {
+                            fn default() -> Self {
+                                let default = <#ident_original>::default();
+                                Self {
+                                    #(#fields),*
+                                }
+                            }
+                        }
+                    }
+                })
+                .into_iter();
+
+            (
+                quote! {
+                    #moves
+                    #inductive
+                },
+                default,
+            )
         }
     };
 
+    remove_item_attr(&mut item.attrs);
     forward_item_attr(&mut item.attrs);
 
     quote! {
@@ -164,6 +192,8 @@ pub fn derive_cartesian(item: TokenStream) -> TokenStream {
                 Box::new({ #iter })
             }
         }
+
+        #(#default)*
     }
     .into_token_stream()
     .into()
@@ -181,6 +211,10 @@ fn forward_item_attr(attrs: &mut [syn::Attribute]) {
                 *attr = syn::parse_quote!(#[ #inner ]);
             }
         })
+}
+
+fn remove_item_attr(attrs: &mut Vec<syn::Attribute>) {
+    attrs.retain(|attr| !(match_attr(attr, "default")))
 }
 
 fn remove_field_attr(attrs: &mut Vec<syn::Attribute>) {
